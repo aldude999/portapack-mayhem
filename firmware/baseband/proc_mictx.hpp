@@ -27,12 +27,16 @@
 #include "baseband_thread.hpp"
 #include "audio_input.hpp"
 #include "tone_gen.hpp"
+#include "dsp_types.hpp"
+#include "dsp_hilbert.hpp"
 
 class MicTXProcessor : public BasebandProcessor {
 public:
 	void execute(const buffer_c8_t& buffer) override;
 	
 	void on_message(const Message* const msg) override;
+	
+	void beep_check(const bool enable_beep);
 
 private:
 	static constexpr size_t baseband_fs = 1536000U;
@@ -59,12 +63,19 @@ private:
 	uint32_t fm_delta { 0 };
 	uint32_t phase { 0 }, sphase { 0 };
 	int32_t sample { 0 }, delta { };
+	int32_t am_sample { 0 };
 	uint32_t beep_index { }, beep_timer { };
-	
+	bool am_enabled { false };
+	bool fm_enabled { true };
+	bool usb_enabled { false };
+	bool lsb_enabled { false };
+	uint32_t am_carrier_lvl { 48 };
+	uint32_t am_moddiv_lvl { 4 };
 	int8_t re { 0 }, im { 0 };
 	
 	AudioLevelReportMessage level_message { };
 	TXProgressMessage txprogress_message { };
+	dsp::HilbertTransform	hilbert;
 };
 
 #endif

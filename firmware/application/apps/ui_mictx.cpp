@@ -29,6 +29,7 @@
 #include "string_format.hpp"
 #include "irq_controls.hpp"
 
+
 #include <cstring>
 
 using namespace tonekey;
@@ -45,7 +46,8 @@ void MicTXView::focus() {
 			field_rxfrequency.focus();
 			break;
 		default:
-			field_va.focus();
+			//field_va.focus();
+			tx_button.focus();
 			break;
 	}	
 }
@@ -65,14 +67,21 @@ void MicTXView::configure_baseband() {
 		sampling_rate / 20,		// Update vu-meter at 20Hz
 		transmitting ? transmitter_model.channel_bandwidth() : 0,
 		mic_gain,
-		TONES_F2D(tone_key_frequency(tone_key_index), sampling_rate)
+		TONES_F2D(tone_key_frequency(tone_key_index), sampling_rate),
+		enable_am,
+		am_carrier_lvl,
+		0,
+		enable_usb,
+		enable_lsb
 	);
+
 }
 
 void MicTXView::set_tx(bool enable) {
 	if (enable) {
 		if (rx_enabled)  //If audio RX is enabled
 			rxaudio(false); //Then turn off audio RX
+		receiver_model.set_modulation(ReceiverModel::Mode::NarrowbandFMAudio); // Weird workaround for FM TX
 		transmitting = true;
 		configure_baseband();
 		transmitter_model.set_tuning_frequency(tx_frequency);
@@ -143,8 +152,20 @@ void MicTXView::rxaudio(bool is_on) {
 	if (is_on) {
 		audio::input::stop();
 		baseband::shutdown();
-		baseband::run_image(portapack::spi_flash::image_tag_nfm_audio);
-		receiver_model.set_modulation(ReceiverModel::Mode::NarrowbandFMAudio);
+		
+		if (enable_am || enable_usb || enable_lsb) {
+			baseband::run_image(portapack::spi_flash::image_tag_am_audio);
+			receiver_model.set_modulation(ReceiverModel::Mode::AMAudio);	
+			if (options_mode.selected_index() < 4)
+				receiver_model.set_am_configuration(options_mode.selected_index() - 1);
+			else
+				receiver_model.set_am_configuration(0);
+		}
+		else {
+			baseband::run_image(portapack::spi_flash::image_tag_nfm_audio);
+			receiver_model.set_modulation(ReceiverModel::Mode::NarrowbandFMAudio);
+			
+		}
 		receiver_model.set_sampling_rate(3072000);
 		receiver_model.set_baseband_bandwidth(1750000);	
 //		receiver_model.set_tuning_frequency(field_frequency.value()); //probably this too can be commented out.
@@ -155,9 +176,13 @@ void MicTXView::rxaudio(bool is_on) {
 		receiver_model.enable();
 		audio::output::start();
 	} else {	//These incredibly convoluted steps are required for the vumeter to reappear when stopping RX.
+		//baseband::run_image(portapack::spi_flash::image_tag_nfm_audio); //There is something seriously wrong if these two lines fixes the issue with AM TX...
+		receiver_model.set_modulation(ReceiverModel::Mode::NarrowbandFMAudio);
 		receiver_model.disable();
 		baseband::shutdown();
+
 		baseband::run_image(portapack::spi_flash::image_tag_mic_tx);
+		audio::output::stop();
 		audio::input::start();
 //		transmitter_model.enable();		
 		portapack::pin_i2s0_rx_sda.mode(3);
@@ -186,20 +211,25 @@ MicTXView::MicTXView(
 	
 	baseband::run_image(portapack::spi_flash::image_tag_mic_tx);
 	
+
+	
 	add_children({
 		&labels,
 		&vumeter,
 		&options_gain,
 //		&check_va,
 		&field_va,
+		&field_rxbw,
 		&field_va_level,
 		&field_va_attack,
 		&field_va_decay,
+//		&field_carrier,
 		&field_bw,
 		&field_rfgain,
 		&field_rfamp,
 		&field_frequency,
 		&options_tone_key,
+		&options_mode,
 		&check_rogerbeep,
 		&check_rxactive,
 		&field_volume,
@@ -210,6 +240,8 @@ MicTXView::MicTXView(
 		&field_rxamp,
 		&tx_button
 	});
+
+
 
 	tone_keys_populate(options_tone_key);
 	options_tone_key.on_change = [this](size_t i, int32_t) {
@@ -222,6 +254,50 @@ MicTXView::MicTXView(
 		configure_baseband();
 	};
 	options_gain.set_selected_index(1);		// x1.0
+	
+	options_mode.on_change = [this](size_t, int32_t v) {
+		enable_am = false;
+		enable_usb = false;
+		enable_lsb = false;
+		switch(v) {
+			case 0:
+				enable_am = false;
+				enable_usb = false;
+				enable_lsb = false;
+				field_bw.set_value(transmitter_model.channel_bandwidth() / 1000);
+				//if (rx_enabled)
+					rxaudio(rx_enabled);
+				break;
+			case 1:
+				enable_am = true;
+				am_carrier_lvl = 20;
+				//if (rx_enabled)
+					rxaudio(rx_enabled);
+				break;
+			case 2:
+				enable_am = true;
+				enable_usb = true;
+				//if (rx_enabled)
+					rxaudio(rx_enabled);
+				break;
+			case 3:
+				enable_am = true;
+				enable_lsb = true;
+				
+				//if (rx_enabled)
+					rxaudio(rx_enabled);
+				break;
+			case 4:
+				enable_usb = false;
+				enable_lsb = false;
+				enable_am = true;
+				am_carrier_lvl = 0;
+				//if (rx_enabled)
+					rxaudio(rx_enabled);
+				break;
+		}
+		//configure_baseband();
+	};
 	
 	tx_frequency = transmitter_model.tuning_frequency();
 	field_frequency.set_value(transmitter_model.tuning_frequency());
@@ -244,16 +320,37 @@ MicTXView::MicTXView(
 		};
 	};
 	
+	field_rxbw.on_change = [this](size_t, int32_t v) {
+		switch(v) {
+			case 0:
+				receiver_model.set_nbfm_configuration(0);
+				break;
+			case 1:
+				receiver_model.set_nbfm_configuration(1);
+				break;
+			case 2:
+				receiver_model.set_nbfm_configuration(2);
+				break;
+		}
+	};
+	field_rxbw.set_selected_index(2);
+	
 	field_bw.on_change = [this](uint32_t v) {
 		transmitter_model.set_channel_bandwidth(v * 1000);
 	};
 	field_bw.set_value(10);
 	
-	tx_gain = transmitter_model.tx_gain();
+//	field_carrier.on_change = [this](uint32_t v) {
+//		am_carrier_lvl = v;
+//	};
+//	field_carrier.set_value(am_carrier_lvl);
+		tx_gain = transmitter_model.tx_gain();
+		
 	field_rfgain.on_change = [this](int32_t v) {
 		tx_gain = v;
 		
 	};
+	
 	field_rfgain.set_value(tx_gain);
 
 	rf_amp = transmitter_model.rf_amp();
@@ -262,14 +359,14 @@ MicTXView::MicTXView(
 	};
 	field_rfamp.set_value(rf_amp ? 14 : 0);
 	
-	/*
+/*	
 	check_va.on_select = [this](Checkbox&, bool v) {
 		va_enabled = v;
 		text_ptt.hidden(v);			//hide / show PTT text
 		check_rxactive.hidden(v); 	//hide / show the RX AUDIO
 		set_dirty();				//Refresh display
-	};
-	*/
+	}; */
+	
 	field_va.set_selected_index(1);
 	field_va.on_change = [this](size_t, int32_t v) {
 		switch(v) {
@@ -298,7 +395,6 @@ MicTXView::MicTXView(
 		}
 		set_dirty();
 	};
-	
 
 	check_rogerbeep.on_select = [this](Checkbox&, bool v) {
 		rogerbeep_enabled = v;
@@ -327,7 +423,10 @@ MicTXView::MicTXView(
 		rxaudio(v);				//Activate-Deactivate audio rx accordingly
 		set_dirty();			//Refresh interface
 	};
+	
 
+	
+	//field_volume.set_value((receiver_model.headphone_volume() - audio::headphone::volume_range().max).decibel() + 99);
 	field_volume.set_value((receiver_model.headphone_volume() - audio::headphone::volume_range().max).decibel() + 99);
 	field_volume.on_change = [this](int32_t v) { this->on_headphone_volume_changed(v);	};
 
@@ -340,6 +439,7 @@ MicTXView::MicTXView(
 	rx_frequency = receiver_model.tuning_frequency();
 	field_rxfrequency.set_value(rx_frequency);
 	field_rxfrequency.set_step(receiver_model.frequency_step());
+	
 	field_rxfrequency.on_change = [this](rf::Frequency f) {
 		rx_frequency = f;
 		if(rx_enabled)
@@ -376,12 +476,14 @@ MicTXView::MicTXView(
 	field_rxvga.set_value(rx_vga);
 
 	rx_amp = receiver_model.rf_amp();
+
 	field_rxamp.on_change = [this](int32_t v) {
 		rx_amp = v;
 		if(rx_enabled)
 			receiver_model.set_rf_amp(rx_amp);
 	};
 	field_rxamp.set_value(rx_amp);
+	receiver_model.set_rf_amp(rx_amp);
 
 	tx_button.on_select = [this](Button&) {
 		if(ptt_enabled && !transmitting) {
@@ -412,6 +514,7 @@ MicTXView::MicTXView(
 }
 
 MicTXView::~MicTXView() {
+	
 	audio::input::stop();
 	transmitter_model.set_tuning_frequency(tx_frequency); // Save Tx frequency instead of Rx. Or maybe we need some "System Wide" changes to seperate Tx and Rx frequency.
 	transmitter_model.disable();
