@@ -858,8 +858,7 @@ public:
 		const uint32_t tone_key_delta,
 		const float tone_key_mix_weight,
 		const bool am_enabled,
-		const uint32_t am_carrier_level,
-		const uint32_t am_modulation_divider,
+		const bool dsb_enabled,
 		const bool usb_enabled,
 		const bool lsb_enabled
 	) : Message { ID::AudioTXConfig },
@@ -869,8 +868,7 @@ public:
 		tone_key_delta(tone_key_delta),
 		tone_key_mix_weight(tone_key_mix_weight),
 		am_enabled(am_enabled),
-		am_carrier_level(am_carrier_level),
-		am_modulation_divider(am_modulation_divider),
+		dsb_enabled(dsb_enabled),
 		usb_enabled(usb_enabled),
 		lsb_enabled(lsb_enabled)
 	{
@@ -882,8 +880,7 @@ public:
 	const uint32_t tone_key_delta;
 	const float tone_key_mix_weight;
 	const bool am_enabled;
-	const uint32_t am_carrier_level;
-	const uint32_t am_modulation_divider;
+	const bool dsb_enabled;
 	const bool usb_enabled;
 	const bool lsb_enabled;
 };
